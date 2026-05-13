@@ -1,0 +1,480 @@
+<!DOCTYPE html><html lang="sr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lucky6 V11.3 Analysis Fix — Predikcija</title><link rel="manifest" href="manifest.json"><style>
+body{margin:0;padding:16px;background:#0f172a;color:white;font-family:Arial,sans-serif}
+.container{max-width:900px;margin:auto}.card{background:#111827;padding:18px;border-radius:18px;margin-top:16px;box-shadow:0 0 20px rgba(0,0,0,.28)}
+h1{font-size:26px;margin:0 0 12px}h2{font-size:21px;margin:0 0 12px}.small{color:#94a3b8;font-size:14px;line-height:1.45}
+.drawBox{margin-top:12px;padding:12px;background:#1e293b;border-radius:14px}.drawTitle{font-weight:bold;color:#60a5fa;margin-bottom:8px}
+textarea{width:100%;min-height:86px;background:#020617;color:white;border:none;border-radius:12px;padding:13px;font-size:16px;resize:vertical;box-sizing:border-box}
+button,select{width:100%;padding:14px;margin-top:12px;border:none;border-radius:12px;font-size:17px;box-sizing:border-box}
+button{background:#2563eb;color:white;cursor:pointer;font-weight:bold}button.green{background:#16a34a}button.gray{background:#334155}button.red{background:#dc2626}
+select{background:#020617;color:white}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:700px){.grid2{grid-template-columns:1fr}}
+.ballwrap{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}.ball{width:54px;height:54px;border-radius:50%;background:#16a34a;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:bold;box-shadow:0 0 10px rgba(0,0,0,.35)}
+.exclude{background:#dc2626}.tag{display:inline-block;padding:7px 11px;background:#1e293b;border-radius:999px;margin-top:8px;margin-right:6px;font-size:14px}
+.ticket{margin-top:12px;padding:14px;background:#020617;border-radius:12px;border:1px solid #334155;font-size:17px;line-height:1.6}.best{border-color:#22c55e}
+table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}td,th{padding:8px;border-bottom:1px solid #334155;text-align:center}th{color:#60a5fa}.hit{color:#22c55e;font-weight:bold}.hr{border-top:1px solid #334155;margin-top:18px;padding-top:12px}
+</style></head><body><div class="container"><h1>🎯 Lucky6 AI V11.3 — Predikcija</h1>
+<div class="card"><button onclick="location.href='index.html'" class="gray">← Nazad na unos</button><h2>Signal</h2><span class="tag" id="sig"></span><span class="tag" id="edge"></span><span class="tag" id="auto"></span><span class="tag" id="profileTag"></span><span class="tag" id="riskTag"></span><h2>Finalna AI predikcija</h2><div class="ballwrap" id="best"></div><h2>Preporuka tiketa</h2><div id="recommendedTickets"></div><h2>AI tiketi</h2><div id="tickets"></div><h2>Exclusion AI</h2><span class="tag" id="exConf"></span><div class="ballwrap" id="ex"></div><div class="hr"><h2>Live trening</h2><textarea id="actual" inputmode="text" oninput="filterNumbers(this)" placeholder="Unesi stvarno izvučenih 35 brojeva"></textarea><button onclick="evalNow()" class="green">📊 Evaluiraj i treniraj</button><div id="eval"></div></div></div>
+<div class="card"><h2>💰 Payout Lab</h2><div id="payoutInfo"></div></div><div class="card"><h2>📍 Position Lab</h2><div id="positionLabBox"></div></div><div class="card"><h2>Prediction Pro</h2><div id="qualityWarnings"></div><h3>Draw Similarity</h3><div id="similarityBox"></div></div><div class="card"><h2>Detalji</h2><span class="tag" id="sum"></span><span class="tag" id="train"></span><h3>Top rang</h3><table><thead><tr><th>Broj</th><th>Boja</th><th>Score</th><th>Izlazaka</th></tr></thead><tbody id="rank"></tbody></table></div><div class="card"><h2>AI status</h2><div id="learningStats"></div><div id="proStats"></div></div></div><script>
+const COLORS=['CRVENA','ŽUTA','PLAVA','NARANDŽASTA','ZELENA','ROZA','LJUBIČASTA'];
+const W0={frequency:.32,recency:.25,exclusion:.22,pair:.13,color:.07,consensus:.08};
+function getColor(n){return COLORS[(n-1)%7]}
+function filterNumbers(el){el.value=el.value.replace(/[^0-9 ,\n]/g,'')}
+function parseNumbers(raw){return raw.trim().split(/[ ,\n]+/).map(Number).filter(n=>!isNaN(n))}
+function validateDraw(nums){if(nums.length!==35)return'Svako kolo mora imati tačno 35 brojeva.';if(new Set(nums).size!==nums.length)return'Nisu dozvoljeni dupli brojevi.';for(let n of nums){if(n<1||n>49)return'Brojevi moraju biti 1-49.'}return null}
+function getWeights(){let w=JSON.parse(localStorage.getItem('ai_weights')||'null');return norm(w||W0)}
+function saveWeights(w){localStorage.setItem('ai_weights',JSON.stringify(norm(w)))}
+function norm(w){let o={};Object.keys(W0).forEach(k=>o[k]=typeof w[k]=='number'?Math.min(.42,Math.max(.05,w[k])):W0[k]);let s=Object.values(o).reduce((a,b)=>a+b,0);Object.keys(o).forEach(k=>o[k]/=s);return o}
+
+function activeProfileName(){
+  try{
+    let last = JSON.parse(localStorage.getItem('last_result') || 'null');
+    if(last && last.profile) return last.profile;
+  }catch(e){}
+  return localStorage.getItem('active_terminal_profile') || 'default';
+}
+
+function profileStorageKey(key){
+  return 'profile_' + activeProfileName() + '_' + key;
+}
+
+function profileLogs(){
+  let profileKey = profileStorageKey('ai_logs');
+  let logs = JSON.parse(localStorage.getItem(profileKey) || 'null');
+  if(Array.isArray(logs)) return logs;
+  return JSON.parse(localStorage.getItem('ai_logs') || '[]');
+}
+
+function saveProfileLogs(logs){
+  localStorage.setItem(profileStorageKey('ai_logs'),JSON.stringify(logs));
+  localStorage.setItem('ai_logs',JSON.stringify(logs));
+}
+
+function history(){return profileLogs().filter(x=>Array.isArray(x.actual)&&!validateDraw(x.actual)).map(x=>x.actual)}
+function minmax(m){let v=Object.values(m),mi=Math.min(...v),ma=Math.max(...v),o={};for(let i=1;i<=49;i++)o[i]=ma===mi?.5:(m[i]-mi)/(ma-mi);return o}
+function training(session,skipped){let h=history().slice(-120),boost=session.length>=8?2:session.length>=5?3:4;boost=Math.max(1,boost-parseInt(skipped||0));let b=[];for(let i=0;i<boost;i++)b.push(...session);return [...h,...b]}
+function colorStats(draws){let s={};COLORS.forEach(c=>s[c]=0);draws.forEach(d=>d.forEach(n=>s[getColor(n)]++));return s}
+function model(draws,custom=null){let freq={},rec={},abs={},pair={},last={},pairMap={};for(let i=1;i<=49;i++){freq[i]=0;rec[i]=0;abs[i]=0;pair[i]=0;last[i]=-1}draws.forEach((d,idx)=>{d.forEach(n=>{freq[n]++;rec[n]+=idx+1;last[n]=idx});for(let a=0;a<d.length;a++)for(let b=a+1;b<d.length;b++){let k=[d[a],d[b]].sort((x,y)=>x-y).join('-');pairMap[k]=(pairMap[k]||0)+1}});let ld=draws[draws.length-1],cs=colorStats(draws),mc=Math.max(...Object.values(cs)),col={};for(let i=1;i<=49;i++){abs[i]=last[i]===-1?draws.length:draws.length-last[i];ld.forEach(n=>{if(n!==i){let k=[i,n].sort((x,y)=>x-y).join('-');pair[i]+=pairMap[k]||0}});col[i]=cs[getColor(i)]/Math.max(1,mc)}
+let baseComps={frequency:minmax(freq),recency:minmax(rec),exclusion:minmax(abs),pair:minmax(pair),color:minmax(col)},consensus={};for(let i=1;i<=49;i++){let vals=Object.values(baseComps).map(m=>m[i]||0);consensus[i]=vals.filter(v=>v>.58).length/vals.length}let c={...baseComps,consensus:minmax(consensus)},w=custom?norm(custom):getWeights(),sc=[];for(let i=1;i<=49;i++){let score=0;Object.keys(w).forEach(k=>score+=(c[k][i]||0)*w[k]*100);sc.push({number:i,score,count:freq[i],color:getColor(i),components:Object.fromEntries(Object.keys(c).map(k=>[k,c[k][i]]))})}sc.sort((a,b)=>b.score-a.score);return{scored:sc,exclusion:[...sc].sort((a,b)=>a.score-b.score).slice(0,14),colorStats:cs}}
+function ticketValue(t,map){return t.reduce((s,n)=>s+(map[n]||0),0)/t.length+new Set(t.map(getColor)).size*.65}
+function makeTickets(scored,excl,count,size){let ban=new Set(excl),pool=scored.filter(x=>!ban.has(x.number)).slice(0,35),used={},tickets=[];for(let i=0;i<count;i++){let t=[],safe=0;while(t.length<size&&safe++<300){let cand=pool.filter(x=>!t.includes(x.number));let ws=cand.map(x=>({x,w:Math.max(.01,x.score)/(1+(used[x.number]||0)*.8)}));let tot=ws.reduce((a,b)=>a+b.w,0),r=Math.random()*tot,ch=ws[0].x;for(let p of ws){r-=p.w;if(r<=0){ch=p.x;break}}t.push(ch.number)}t=[...new Set(t)].slice(0,size).sort((a,b)=>a-b);t.forEach(n=>used[n]=(used[n]||0)+1);tickets.push(t)}let map=Object.fromEntries(scored.map(x=>[x.number,x.score]));tickets.sort((a,b)=>ticketValue(b,map)-ticketValue(a,map));return tickets}
+function signal(m,best,tr,session,skipped,risk='balanced'){let top=best.reduce((a,b)=>a+b.score,0)/best.length,next=m.scored.slice(best.length,best.length*2),na=next.reduce((a,b)=>a+b.score,0)/next.length;let score=45+Math.max(0,top-na)*1.5+Math.min(20,Math.log(tr.length+1)*5)+Math.min(10,session.length*2)-parseInt(skipped||0)*6;if(history().length>=15)score+=5;if(session.length<=3&&history().length<10)score-=8;score=Math.max(0,Math.min(100,Math.round(score)));return{score,label:score>=70?'JAK PLAY':score>=58?'PLAY OPREZ':'SKIP'}}
+function scoreWeights(draws,w,size){if(draws.length<5)return null;let f=0,e=0,r=0;for(let i=3;i<draws.length;i++){let tr=draws.slice(0,i),act=new Set(draws[i]),m=model(tr,w),ex=m.exclusion.map(x=>x.number),pred=m.scored.filter(x=>!ex.includes(x.number)).slice(0,size).map(x=>x.number);f+=pred.filter(n=>act.has(n)).length;e+=ex.filter(n=>!act.has(n)).length;r++}return{score:f/r+(e/r/14)*2,rounds:r}}
+function autoOpt(draws,size){if(draws.length<6)return{message:'AutoOpt: treba 6+ kola'};let key=draws.length+':'+profileLogs().length+':'+size;if(localStorage.getItem('auto_key')===key)return{message:'AutoOpt: svjež'};let cur=getWeights(),best=scoreWeights(draws,cur,size);if(!best)return{message:'AutoOpt: malo podataka'};let bw=cur;for(let i=0;i<(draws.length<10?35:75);i++){let c={};Object.keys(W0).forEach(k=>c[k]=Math.max(.03,(bw[k]||W0[k])+(Math.random()-.5)*.16));let res=scoreWeights(draws,c,size);if(res&&res.score>best.score){best=res;bw=c}}let before=scoreWeights(draws,cur,size);if(before&&best.score>before.score+.005)saveWeights(bw);localStorage.setItem('auto_key',key);return{message:before&&best.score>before.score+.005?`AutoOpt: ${before.score.toFixed(2)} → ${best.score.toFixed(2)}`:'AutoOpt: bez promjene'}}
+function train(actual,components){let w=getWeights(),set=new Set(actual),miss=[];for(let i=1;i<=49;i++)if(!set.has(i))miss.push(i);Object.keys(W0).forEach(k=>{let a=actual.reduce((s,n)=>s+((components[n]&&components[n][k])||0),0)/actual.length;let b=miss.reduce((s,n)=>s+((components[n]&&components[n][k])||0),0)/miss.length;w[k]+=(a-b)*.045});saveWeights(w)}
+function dashboard(){let el=document.getElementById('learningStats');if(!el)return;let logs=profileLogs(),html='';if(!logs.length)html+='<span class="tag">Nema evaluacije</span>';else{let af=logs.reduce((s,l)=>s+(l.finalHits||0),0)/logs.length,ab=logs.reduce((s,l)=>s+(l.bestTicketHits||0),0)/logs.length,ae=logs.reduce((s,l)=>s+(l.exclusionCorrect||0),0)/logs.length;html+=`<span class="tag">Evaluacija: ${logs.length}</span><span class="tag">Avg final: ${af.toFixed(2)}</span><span class="tag">Avg best: ${ab.toFixed(2)}</span><span class="tag">Avg exclusion: ${ae.toFixed(2)}/14</span>`}html+='<h3>Model težine</h3>';Object.entries(getWeights()).forEach(([k,v])=>html+=`<span class="tag">${k}: ${(v*100).toFixed(1)}%</span>`);el.innerHTML=html}
+
+function expectedRandomHits(size){
+  return size * (35/49);
+}
+
+function combination(n,k){
+  if(k<0 || k>n) return 0;
+  if(k===0 || k===n) return 1;
+  let res=1;
+  for(let i=1;i<=k;i++){
+    res = res * (n-k+i) / i;
+  }
+  return res;
+}
+
+function hypergeometricProb(k,size){
+  // Population 49, success 35, fail 14, draws=size
+  return combination(35,k) * combination(14,size-k) / combination(49,size);
+}
+
+function randomHitDistribution(size){
+  let out=[];
+  for(let k=0;k<=size;k++){
+    out.push({hits:k,prob:hypergeometricProb(k,size)});
+  }
+  return out;
+}
+
+function pValueAtLeast(avgHits,size,rounds){
+  // Normal approximation for average random ticket hits
+  let mean = expectedRandomHits(size);
+  let dist = randomHitDistribution(size);
+  let variance = dist.reduce((s,x)=>s + Math.pow(x.hits-mean,2)*x.prob,0);
+  let se = Math.sqrt(variance / Math.max(1,rounds));
+  if(se===0) return 1;
+  let z = (avgHits - mean) / se;
+  // Approx upper-tail p-value
+  let p = 0.5 * erfc(z / Math.sqrt(2));
+  return Math.max(0,Math.min(1,p));
+}
+
+function erfApprox(x){
+  const sign = x >= 0 ? 1 : -1;
+  x = Math.abs(x);
+
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1) * t * Math.exp(-x*x);
+
+  return sign * y;
+}
+
+function erfc(x){
+  return 1 - erfApprox(x);
+}
+
+function chiSquareNumbers(draws){
+  let counts={};
+  for(let i=1;i<=49;i++) counts[i]=0;
+  draws.forEach(d=>d.forEach(n=>counts[n]++));
+  let total=draws.length*35;
+  let expected=total/49;
+  let chi=0;
+  for(let i=1;i<=49;i++){
+    chi += Math.pow(counts[i]-expected,2)/expected;
+  }
+  return {chi,expected,counts};
+}
+
+function colorBiasStats(draws){
+  let stats={};
+  COLORS.forEach(c=>stats[c]=0);
+  draws.forEach(d=>d.forEach(n=>stats[getColor(n)]++));
+  let total=Object.values(stats).reduce((a,b)=>a+b,0);
+  let expected=total/7;
+  let chi=0;
+  COLORS.forEach(c=>chi+=Math.pow(stats[c]-expected,2)/expected);
+  return {stats,chi,expected};
+}
+
+function runBiasLab(){
+  let logs = profileLogs ? profileLogs() : JSON.parse(localStorage.getItem('ai_logs') || '[]');
+  let valid = logs.filter(l=>Array.isArray(l.actual));
+
+  let out = document.getElementById('biasLabOutput');
+  if(!out) return;
+
+  if(valid.length < 10){
+    out.innerHTML = `<div class="ticket">Treba barem 10 evaluiranih kola za ozbiljniji Bias Lab. Trenutno: ${valid.length}</div>`;
+    return;
+  }
+
+  let draws = valid.map(l=>l.actual);
+  let last10 = valid.slice(-10);
+  let last25 = valid.slice(-25);
+
+  let ticketSize = valid.find(l=>Array.isArray(l.prediction))?.prediction?.length || 6;
+
+  function avg(arr,key){
+    if(!arr.length) return 0;
+    return arr.reduce((s,l)=>s+(l[key]||0),0)/arr.length;
+  }
+
+  let avgFinalAll = avg(valid,'finalHits');
+  let avgBestAll = avg(valid,'bestTicketHits');
+  let avgExAll = avg(valid,'exclusionCorrect');
+
+  let avgBest10 = avg(last10,'bestTicketHits');
+  let avgBest25 = avg(last25,'bestTicketHits');
+
+  let randomExp = expectedRandomHits(ticketSize);
+  let edgeAll = avgBestAll - randomExp;
+  let edge10 = avgBest10 - randomExp;
+  let p = pValueAtLeast(avgBestAll,ticketSize,valid.length);
+
+  let chiN = chiSquareNumbers(draws);
+  let colorB = colorBiasStats(draws);
+
+  let sortedNumbers = Object.entries(chiN.counts)
+    .map(([n,c])=>({n:parseInt(n),c}))
+    .sort((a,b)=>b.c-a.c);
+
+  let hot = sortedNumbers.slice(0,8).map(x=>`${x.n}(${x.c})`).join(' - ');
+  let cold = sortedNumbers.slice(-8).reverse().map(x=>`${x.n}(${x.c})`).join(' - ');
+
+  let verdict = 'NEMA DOKAZAN EDGE';
+  let verdictClass = 'warn';
+
+  if(edgeAll > 0.45 && p < 0.10 && valid.length >= 30){
+    verdict = 'MOGUĆ EDGE — nastavi shadow/real test';
+    verdictClass = 'hit';
+  }
+
+  if(edgeAll > 0.75 && p < 0.05 && valid.length >= 50){
+    verdict = 'JAK SIGNAL EDGE-a';
+    verdictClass = 'hit';
+  }
+
+  let terminalScore = Math.round(
+    45 +
+    Math.max(-20,Math.min(25,edgeAll*18)) +
+    Math.max(-10,Math.min(15,(avgExAll-10)*4)) +
+    Math.min(10,Math.log(valid.length+1)*2)
+  );
+
+  terminalScore = Math.max(0,Math.min(100,terminalScore));
+
+  let recommendation = 'Shadow trening';
+
+  if(terminalScore >= 72 && edgeAll > 0.45){
+    recommendation = 'Može real play uz Safe/Balanced';
+  }
+  else if(terminalScore >= 60){
+    recommendation = 'Samo mali oprezni play ili shadow';
+  }
+
+  out.innerHTML = `
+    <div class="ticket">
+      <b>Bias Lab rezultat</b><br><br>
+      Evaluiranih kola: <b>${valid.length}</b><br>
+      Random očekivanje za ${ticketSize} brojeva: <b>${randomExp.toFixed(2)}/${ticketSize}</b><br>
+      AI avg best all-time: <b>${avgBestAll.toFixed(2)}/${ticketSize}</b><br>
+      AI edge vs random: <b>${edgeAll>=0?'+':''}${edgeAll.toFixed(2)}</b><br>
+      Last 10 avg best: <b>${avgBest10.toFixed(2)}/${ticketSize}</b><br>
+      Last 25 avg best: <b>${avgBest25.toFixed(2)}/${ticketSize}</b><br>
+      Avg exclusion: <b>${avgExAll.toFixed(2)}/14</b><br>
+      p-value approx: <b>${p.toFixed(3)}</b><br><br>
+      Verdict: <b class="${verdictClass}">${verdict}</b><br>
+      Terminal strength: <b>${terminalScore}/100</b><br>
+      Preporuka: <b>${recommendation}</b>
+    </div>
+
+    <h3>Brojčani bias</h3>
+    <span class="tag">Chi-square brojevi: ${chiN.chi.toFixed(1)}</span>
+    <span class="tag">Očekivano po broju: ${chiN.expected.toFixed(1)}</span>
+    <div class="ticket">
+      Hot brojevi: ${hot}<br><br>
+      Cold brojevi: ${cold}
+    </div>
+
+    <h3>Position bias</h3>${positionLabReport(draws)}<h3>Color bias</h3>
+    <span class="tag">Chi-square boje: ${colorB.chi.toFixed(1)}</span>
+    <div class="ticket">
+      ${Object.entries(colorB.stats).map(([c,v])=>`${c}: ${v}`).join('<br>')}
+    </div>
+  `;
+}
+
+
+const PAYOUT_TABLE = [
+  10000,7500,5000,2500,1000,500,300,200,150,100,
+  90,80,70,60,50,40,30,25,20,15,
+  10,9,8,7,6,5,4,3,2,1
+];
+
+function payoutForTicket(ticket,actualDraw){
+  if(!Array.isArray(ticket) || !Array.isArray(actualDraw)){
+    return {
+      hit:false,
+      payout:0,
+      sixthHitPosition:null,
+      hitNumbers:[],
+      missing:ticket||[],
+      positions:{}
+    };
+  }
+
+  let positions = {};
+
+  actualDraw.forEach((n,i)=>{
+    positions[n]=i+1;
+  });
+
+  let matched = ticket
+    .filter(n=>positions[n])
+    .map(n=>({
+      number:n,
+      position:positions[n]
+    }))
+    .sort((a,b)=>a.position-b.position);
+
+  let hitNumbers = matched.map(x=>x.number);
+  let missing = ticket.filter(n=>!positions[n]);
+
+  // Lucky6 payout logic:
+  // For any ticket size 6-10, payout is decided when the 6th selected number appears.
+  // Not when all selected numbers appear.
+  if(matched.length < 6){
+    return {
+      hit:false,
+      payout:0,
+      sixthHitPosition:null,
+      hitNumbers,
+      missing,
+      positions
+    };
+  }
+
+  let sixthHitPosition = matched[5].position;
+
+  let payout = 0;
+
+  if(sixthHitPosition >= 6 && sixthHitPosition <= 35){
+    payout = PAYOUT_TABLE[sixthHitPosition-6] || 0;
+  }
+
+  return {
+    hit:true,
+    payout,
+    sixthHitPosition,
+    hitNumbers,
+    missing,
+    positions
+  };
+}
+
+function positionZone(pos){
+  if(pos <= 5) return 'FIRST5';
+  if(pos <= 15) return 'EARLY';
+  if(pos <= 25) return 'MID';
+  return 'LATE';
+}
+
+function buildPositionStats(draws){
+  let stats={};
+
+  for(let i=1;i<=49;i++){
+    stats[i]={
+      count:0,
+      posSum:0,
+      first5:0,
+      early:0,
+      mid:0,
+      late:0,
+      lastPositions:[]
+    };
+  }
+
+  draws.forEach(draw=>{
+    draw.forEach((n,idx)=>{
+      let pos=idx+1;
+      let s=stats[n];
+
+      s.count++;
+      s.posSum+=pos;
+      s.lastPositions.push(pos);
+
+      if(pos<=5) s.first5++;
+      else if(pos<=15) s.early++;
+      else if(pos<=25) s.mid++;
+      else s.late++;
+    });
+  });
+
+  for(let i=1;i<=49;i++){
+    let s=stats[i];
+    s.avgPos=s.count ? s.posSum/s.count : 0;
+    s.first5Rate=s.count ? s.first5/s.count : 0;
+    s.earlyRate=s.count ? (s.first5+s.early)/s.count : 0;
+    s.lateRate=s.count ? s.late/s.count : 0;
+  }
+
+  return stats;
+}
+
+function positionScoreForNumber(number,draws){
+  let stats=buildPositionStats(draws);
+  let s=stats[number];
+
+  if(!s || !s.count) return 0.5;
+
+  // For payout, earlier completion matters. Favor numbers with earlier average position,
+  // but still avoid making this too dominant.
+  let earlyScore = 1 - Math.min(35,Math.max(1,s.avgPos))/35;
+  let first5Bonus = s.first5Rate * 0.25;
+  let earlyBonus = s.earlyRate * 0.20;
+
+  return Math.max(0,Math.min(1,earlyScore + first5Bonus + earlyBonus));
+}
+
+function ticketPositionScore(ticket,draws){
+  if(!ticket.length || !draws.length) return 0;
+  return ticket.reduce((s,n)=>s+positionScoreForNumber(n,draws),0)/ticket.length;
+}
+
+function enhanceTicketsWithPayoutScore(tickets,scored,trainingDraws){
+  let scoreMap=Object.fromEntries(scored.map(x=>[x.number,x.score]));
+
+  return tickets.sort((a,b)=>{
+    let baseA=ticketValue ? ticketValue(a,scoreMap) : a.reduce((s,n)=>s+(scoreMap[n]||0),0)/a.length;
+    let baseB=ticketValue ? ticketValue(b,scoreMap) : b.reduce((s,n)=>s+(scoreMap[n]||0),0)/b.length;
+
+    let posA=ticketPositionScore(a,trainingDraws)*8;
+    let posB=ticketPositionScore(b,trainingDraws)*8;
+
+    return (baseB+posB)-(baseA+posA);
+  });
+}
+
+function positionLabReport(draws){
+  if(!Array.isArray(draws) || draws.length < 5){
+    return '<span class="tag">Position Lab: treba 5+ kola</span>';
+  }
+
+  let stats=buildPositionStats(draws);
+
+  let early=Object.entries(stats)
+    .filter(([n,s])=>s.count>0)
+    .map(([n,s])=>({n:parseInt(n),avg:s.avgPos,rate:s.earlyRate,count:s.count}))
+    .sort((a,b)=>a.avg-b.avg)
+    .slice(0,10);
+
+  let late=Object.entries(stats)
+    .filter(([n,s])=>s.count>0)
+    .map(([n,s])=>({n:parseInt(n),avg:s.avgPos,rate:s.lateRate,count:s.count}))
+    .sort((a,b)=>b.avg-a.avg)
+    .slice(0,10);
+
+  let html = `
+    <div class="ticket">
+      <b>Position Lab</b><br><br>
+      Najraniji brojevi po prosjeku pozicije:<br>
+      ${early.map(x=>`${x.n} (${x.avg.toFixed(1)})`).join(' - ')}
+      <br><br>
+      Najkasniji brojevi po prosjeku pozicije:<br>
+      ${late.map(x=>`${x.n} (${x.avg.toFixed(1)})`).join(' - ')}
+    </div>
+  `;
+
+  return html;
+}
+
+function payoutSummary(ticketHits){
+  let total=ticketHits.reduce((s,x)=>s+(x.payout||0),0);
+  let best=ticketHits.reduce((b,x)=>(x.payout||0)>(b.payout||0)?x:b,{payout:0});
+
+  return {
+    total,
+    best
+  };
+}
+
+function exportDatabase(){let db={logs:profileLogs(),session:JSON.parse(localStorage.getItem('terminal_session')||'[]'),weights:getWeights(),profile:activeProfileName(),playMode:(JSON.parse(localStorage.getItem('last_result')||'{}').playMode||'real'),settings:JSON.parse(localStorage.getItem('ui_settings')||'{}')};let blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='lucky6_v7_database.json';a.click()}
+function importDatabase(ev){let f=ev.target.files[0];if(!f)return;let r=new FileReader();r.onload=e=>{try{let db=JSON.parse(e.target.result);if(db.logs)localStorage.setItem('ai_logs',JSON.stringify(db.logs));if(db.session)localStorage.setItem('terminal_session',JSON.stringify(db.session));if(db.weights)localStorage.setItem('ai_weights',JSON.stringify(db.weights));if(db.settings)localStorage.setItem('ui_settings',JSON.stringify(db.settings));alert('Baza importovana.');location.reload()}catch(err){alert('Greška pri importu.')}};r.readAsText(f)}
+function downloadLogs(){let blob=new Blob([localStorage.getItem('ai_logs')||'[]'],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='lucky6_logs.json';a.click()}
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+</script>
+<script>
+function balls(id,nums,cls=''){let w=document.getElementById(id);w.innerHTML='';nums.forEach(n=>{let b=document.createElement('div');b.className='ball '+cls;b.innerText=n;w.appendChild(b)})}
+function render(){let r=JSON.parse(localStorage.getItem('last_result')||'null');if(!r){document.body.innerHTML='<div class="container"><div class="card"><h2>Nema predikcije.</h2><button onclick="location.href=\'index.html\'">Nazad</button></div></div>';return}let best=r.best.map(x=>x.number);sig.innerText='Signal: '+r.signal.label;edge.innerText='Edge: '+r.signal.score+'/100';auto.innerText=(r.playMode==='shadow'?'SHADOW MODE — samo treniraš | ':'')+r.autoOpt.message;profileTag.innerText='Profil: '+(r.profile||'default');riskTag.innerText='Risk: '+(r.riskMode||'balanced');balls('best',best);balls('ex',r.exclusion,'exclude');let exC=exclusionConfidence(r.exclusion,r.scored);exConf.innerText='Exclusion confidence: '+exC+'%';recommendedTickets.innerHTML=ticketRecommendations(r.tickets,r);qualityWarnings.innerHTML=qualityWarnings(r,exC);similarityBox.innerHTML=similaritySearch(r);tickets.innerHTML='';r.tickets.forEach((t,i)=>tickets.innerHTML+=`<div class="ticket ${i===0?'best':''}">${i===0?'⭐ BEST BET':'🎟 Tiket '+(i+1)}<br><br>${t.join(' - ')}</div>`);sum.innerText='Suma: '+best.reduce((a,b)=>a+b,0);train.innerText='Trening kola: '+r.training.length;
+  let payoutInfoBox=document.getElementById('payoutInfo');
+  if(payoutInfoBox){
+    payoutInfoBox.innerHTML=`
+      <div class="ticket">
+        Payout pravilo je ubačeno:<br><br>
+        Prvih 5 pozicija nema isplatu. Kada 6. odabranih brojeva sa tiketa izađe na 6. kuglici = 10.000, zatim ide stepeno dole do 35. kuglice = 1.<br><br>
+        Nakon evaluacije vidiš poziciju 6. pogođenog broja i isplatu za svaki tiket.
+      </div>
+    `;
+  }
+
+  let positionBox=document.getElementById('positionLabBox');
+  if(positionBox){
+    positionBox.innerHTML=positionLabReport(r.training||[]);
+  }
+
+rank.innerHTML='';r.scored.slice(0,15).forEach(x=>rank.innerHTML+=`<tr><td>${x.number}</td><td>${x.color}</td><td>${x.score.toFixed(1)}</td><td>${x.count}</td></tr>`);renderEval();dashboard()}
+function renderEval(){let last=JSON.parse(localStorage.getItem('last_eval')||'null');if(!last)return;let rows=last.ticketHits.map((x,i)=>`<tr><td>Tiket ${i+1}</td><td>${x.hits}/${x.ticket.length}</td><td>${x.perfect?'✅':'—'}</td><td>${x.sixthHitPosition||'-'}</td><td>${x.payout||0}</td><td>${x.ticket.map(n=>x.hitNumbers.includes(n)?'<span class="hit">'+n+'</span>':n).join(' - ')}</td></tr>`).join('');eval.innerHTML=`<div class="ticket"><b>Rezultat treninga</b><br><br>Finalna AI predikcija: <b>${last.finalHits}/${last.predictionLength}</b><br>Najbolji AI tiket: <b>${last.bestTicketHits}/${last.predictionLength}</b><br>Exclusion tačno: <b>${last.exclusionCorrect}/14</b><br>Ukupna isplata generisanih tiketa: <b>${last.totalPayout||0}</b><br>Najbolja pojedinačna isplata: <b>${last.bestPayout||0}</b><br>${last.autoMessage||''}</div><table><thead><tr><th>Tiket</th><th>Pogodak</th><th>Status</th><th>6. pogodak</th><th>Isplata</th><th>Brojevi</th></tr></thead><tbody>${rows}</tbody></table>`}
+function evalNow(){try{let nums=parseNumbers(actual.value),err=validateDraw(nums);if(err){alert(err);return}let pred=JSON.parse(localStorage.getItem('last_prediction')||'[]'),tks=JSON.parse(localStorage.getItem('last_tickets')||'[]'),ex=JSON.parse(localStorage.getItem('last_exclusion')||'[]'),comp=JSON.parse(localStorage.getItem('last_components')||'{}');let set=new Set(nums),finalHits=pred.filter(n=>set.has(n)).length,ths=tks.map(t=>{let p=payoutForTicket(t,nums);return {ticket:t,hits:p.hitNumbers.length,perfect:p.hit,hitNumbers:p.hitNumbers,payout:p.payout,sixthHitPosition:p.sixthHitPosition,missing:p.missing}}),bt=ths.reduce((b,c)=>c.hits>b.hits?c:b,ths[0]||{hits:0}),exc=ex.filter(n=>!set.has(n)).length;train(nums,comp);let ses=JSON.parse(localStorage.getItem('terminal_session')||'[]');ses.push(nums);localStorage.setItem('terminal_session',JSON.stringify(ses));let au=autoOpt(training(ses,0),pred.length,true),logs=profileLogs();logs.push({date:new Date().toISOString(),actual:nums,prediction:pred,tickets:tks,exclusion:ex,finalHits,bestTicketHits:bt.hits,exclusionCorrect:exc,totalPayout:(payoutSummary(ths).total),bestPayout:(payoutSummary(ths).best.payout||0),weights:getWeights(),profile:activeProfileName(),playMode:(JSON.parse(localStorage.getItem('last_result')||'{}').playMode||'real')});saveProfileLogs(logs);let ps=payoutSummary(ths);localStorage.setItem('last_eval',JSON.stringify({finalHits,predictionLength:pred.length,bestTicketHits:bt.hits,exclusionCorrect:exc,ticketHits:ths,totalPayout:ps.total,bestPayout:ps.best.payout||0,autoMessage:au.message}));renderEval();dashboard()}catch(e){console.error(e);alert('Greška u evaluaciji.')}}
+render();
+</script></body></html>
